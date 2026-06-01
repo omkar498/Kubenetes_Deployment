@@ -1,0 +1,29 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-frontend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+    spec:
+      containers:
+        - name: web-app
+          image: hashicorp/http-echo:latest
+          args:
+            - "-text=Successfully communicating with postgres-service on port 5432!"
+          ports:
+            - containerPort: 5678
+          # CRITICAL FOR HPA: You must define resource boundaries
+          resources:
+            requests:
+              cpu: "100m"     # 10% of a single CPU core
+              memory: "64Mi"
+            limits:
+              cpu: "200m"
+              memory: "128Mi"  

@@ -1,0 +1,50 @@
+---
+# 1. THE DEVELOPER ROLE
+# Defines exactly what the developers are allowed to do
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: default
+  name: developer-readonly-role
+rules:
+- apiGroups: ["", "apps", "batch"]
+  resources: ["pods", "pods/log", "deployments", "statefulsets", "services"]
+  verbs: ["get", "list", "watch"] # Strictly read-only
+- apiGroups: [""]
+  resources: ["pods/portforward"]
+  verbs: ["create"] # Allowed to port-forward to test the DB locally
+
+---
+# 2. BIND THE DEVELOPER GROUP
+# Connects the "developers" group to the Role above
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: developers-binding
+  namespace: default
+subjects:
+- kind: Group
+  name: developers # Anyone logging in with this group gets the permissions
+  apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: Role
+  name: developer-readonly-role
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# 3. BIND THE DEVOPS GROUP
+# Re-uses the powerful Kubernetes built-in "admin" ClusterRole, 
+# but restricts it ONLY to the "default" namespace.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: devops-binding
+  namespace: default
+subjects:
+- kind: Group
+  name: devops
+  apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: ClusterRole
+  name: admin # Built-in superuser role for namespaces
+  apiGroup: rbac.authorization.k8s.io

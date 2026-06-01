@@ -1,0 +1,162 @@
+---
+# 1. SECRETS: Storing the database passwords securely
+apiVersion: v1
+kind: Secret
+metadata:
+  name: pg-secrets
+type: Opaque
+stringData:
+  postgres-password: "SuperSecurePassword123"
+  replication-password: "ReplicationPassword123"
+
+---
+# 2. SERVICES: Routing traffic (One for Writes, One for Reads)
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-primary
+spec:
+  type: ClusterIP
+  ports:
+    - port: 5432
+      targetPort: 5432
+  selector:
+    role: primary # Routes only to the primary node
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-read
+spec:
+  type: ClusterIP
+  ports:
+    - port: 5432
+      targetPort: 5432
+  selector:
+    role: replica # Load balances across the read replicas
+
+---
+# 3. PRIMARY NODE: The Write Database (StatefulSet)
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres-primary
+spec:
+  serviceName: "postgres-primary"
+  replicas: 1
+  selector:
+    matchLabels:
+      role: primary
+  template:
+    metadata:
+      labels:
+        role: primary
+    spec:
+      # Soft Anti-Affinity: Try not to put this on the same node as a replica
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 1
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: role
+                  operator: In
+                  values: ["replica"]
+              topologyKey: "kubernetes.io/hostname"
+      containers:
+      - name: postgresql
+        image: docker.io/bitnamilegacy/postgresql:15
+        ports:
+        - containerPort: 5432
+        env:
+        - name: POSTGRESQL_REPLICATION_MODE
+          value: "master"
+        - name: POSTGRESQL_REPLICATION_USER
+          value: "repl_user"
+        - name: POSTGRESQL_REPLICATION_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: pg-secrets
+              key: replication-password
+        - name: POSTGRESQL_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: pg-secrets
+              key: postgres-password
+        volumeMounts:
+        - name: data
+          mountPath: /bitnami/postgresql
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      storageClassName: "standard" # Kind's default local storage
+      resources:
+        requests:
+          storage: 2Gi
+
+---
+# 4. REPLICA NODES: The Read Databases (StatefulSet)
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres-replica
+spec:
+  serviceName: "postgres-read"
+  replicas: 2
+  selector:
+    matchLabels:
+      role: replica
+  template:
+    metadata:
+      labels:
+        role: replica
+    spec:
+      # Soft Anti-Affinity: Try to put these on different nodes from each other
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 1
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: role
+                  operator: In
+                  values: ["replica", "primary"]
+              topologyKey: "kubernetes.io/hostname"
+      containers:
+      - name: postgresql
+        image: docker.io/bitnamilegacy/postgresql:15
+        ports:
+        - containerPort: 5432
+        env:
+        - name: POSTGRESQL_REPLICATION_MODE
+          value: "slave"
+        - name: POSTGRESQL_MASTER_HOST
+          value: "postgres-primary" # Points to the primary service created above
+        - name: POSTGRESQL_REPLICATION_USER
+          value: "repl_user"
+        - name: POSTGRESQL_REPLICATION_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: pg-secrets
+              key: replication-password
+        - name: POSTGRESQL_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: pg-secrets
+              key: postgres-password
+        volumeMounts:
+        - name: data
+          mountPath: /bitnami/postgresql
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      storageClassName: "standard"
+      resources:
+        requests:
+          storage: 2Gi
